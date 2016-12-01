@@ -41,6 +41,7 @@ typedef struct app_config
 	const char * log_file;
 	const char * blacklist;
 	int          daemonize;
+	int          filter_ipv6;
 
 } app_config;
 
@@ -56,7 +57,7 @@ typedef struct pending_req
 typedef struct srv_socket
 {
 	int          sk;
-	pending_req  requests[256];
+	pending_req  requests[1024];
 	size_t       pending;
 	uint64_t     next_id_ext;
 
@@ -104,7 +105,7 @@ int sa_init(sockaddr_in * sa, const char * addr, uint16_t port)
 /*
  *
  */
-int relay_q(int sk_cli, srv_socket * srv, io_buf * buf, nope_list * nl)
+int relay_q(int sk_cli, srv_socket * srv, io_buf * buf, nope_list * nl, int filter_ipv6)
 {
 	sockaddr_in sa_cli = { AF_INET };
 	socklen_t sa_len = sizeof sa_cli;
@@ -149,13 +150,25 @@ int relay_q(int sk_cli, srv_socket * srv, io_buf * buf, nope_list * nl)
 					break;
 				}
 
-				if (nl && match_nope_list(nl, q.name))
+				if ((nl && match_nope_list(nl, q.name)) ||
+						(filter_ipv6 && (q.type == 28))) {
+					//printf("nope -- %s - %s ipv6\n", inet_ntoa(sa_cli.sin_addr), q.name);
 					nope_it = 1;
+					buf->hdr.flags &= htons(~0x000F);
+					buf->hdr.flags |= htons( 0x0003);
+					buf->hdr.flags |= htons(1 << 15);
+					buf->hdr.flags |= htons(1 << 7);
+					r = sendto(sk_cli, buf, r, 0, (void*)&sa_cli, sizeof sa_cli);
+					if (r < 0) printf("cli < failed with %d\n", errno);
+					continue;
+				}
 
 				printf("%s %04lx -- %s\n", 
 					nope_it ? "nope --" : "       ",
 					0xffff & srv->next_id_ext, q.name);
 			}
+
+			if (nope_it) continue;
 		}
 
 		if (srv->pending < sizeof_array(srv->requests))
@@ -279,6 +292,7 @@ void syntax()
 	    "        -f <file>         -  read blacklist from <file>\n"
 	    "        -s <IP4_address>  -  DNS server to use\n"
 	    "        -d                -  daemonize\n"
+	    "        -6                -  filter ipv6 queries\n"
 	    "        -h, -?            -  show this message\n"
 	    "\n"
 	);
@@ -304,6 +318,9 @@ void parse_args(int argc, char ** argv, app_config * conf)
 		else
 		if (! strcmp(arg, "-d"))
 			conf->daemonize = 1;
+		else
+		if (! strcmp(arg, "-6"))
+			conf->filter_ipv6 = 1;
 		else
 			syntax();
 	}
@@ -356,7 +373,8 @@ int main(int argc, char ** argv)
 		"208.67.222.222",     /* dns_server         */
 		NULL,                 /* log_file -> stdout */
 		"dnswhisperer.txt",   /* blacklist          */
-		0                     /* daemonize          */
+		0,                    /* daemonize          */
+		0                     /* filter ipv6        */
 	};
 
 	nope_list * nl;
@@ -393,7 +411,7 @@ int main(int argc, char ** argv)
 	if (unblock(sk_cli) < 0)
 		die("unblock() failed with %d\n", errno);
 
-	sa_init(&sa_cli, NULL, 53);
+	sa_init(&sa_cli, NULL, 5333);
 	if (bind(sk_cli, (void*)&sa_cli, sizeof sa_cli) < 0)
 		die("bind() failed with %d\n", errno);
 
@@ -439,7 +457,7 @@ int main(int argc, char ** argv)
 			continue;
 
 		if (FD_ISSET(sk_cli, &fdr))
-			relay_q(sk_cli, &srv, &buf, nl);
+			relay_q(sk_cli, &srv, &buf, nl, conf.filter_ipv6);
 
 		if (FD_ISSET(srv.sk, &fdr))
 			relay_r(&srv, sk_cli, &buf);
