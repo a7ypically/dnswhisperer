@@ -9,6 +9,7 @@
 
 #include "byte_range.h"
 #include <stdlib.h>
+#include <arpa/inet.h>
 
 static
 int parse_name(byte_range * buf, byte_range * name)

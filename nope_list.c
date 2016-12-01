@@ -20,7 +20,7 @@ void * zalloc(size_t bytes)
 {
 	void * ptr = calloc(1, bytes);
 	if (! ptr)
-		printf("calloc(%u) failed\n", bytes);
+		printf("calloc(%lu) failed\n", bytes);
 	return ptr;
 }
 
@@ -64,7 +64,7 @@ nope_list * load_nope_list(const char * filename, size_t max_size)
 	r = read(fd, (void*)nl->raw.ptr, st.st_size);
 	if (r != st.st_size)
 	{
-		printf("read(%s) returned %d, wanted %d\n", filename, r, st.st_size);
+		printf("read(%s) returned %d, wanted %lu\n", filename, r, st.st_size);
 		goto err;
 	}
 	nl->raw.end = nl->raw.ptr + st.st_size;

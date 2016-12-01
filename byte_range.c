@@ -9,6 +9,7 @@
 
 #include <ctype.h>
 #include <stddef.h>
+#include <string.h>
 
 void br_get_line(byte_range * buf, byte_range * line)
 {

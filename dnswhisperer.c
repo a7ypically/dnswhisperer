@@ -17,6 +17,9 @@
 
 #include <netinet/in.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
+
+#include <unistd.h>
 
 #include "dns.h"
 #include "nope_list.h"
@@ -149,7 +152,7 @@ int relay_q(int sk_cli, srv_socket * srv, io_buf * buf, nope_list * nl)
 				if (nl && match_nope_list(nl, q.name))
 					nope_it = 1;
 
-				printf("%s %04llx -- %s\n", 
+				printf("%s %04lx -- %s\n", 
 					nope_it ? "nope --" : "       ",
 					0xffff & srv->next_id_ext, q.name);
 			}
@@ -173,9 +176,9 @@ int relay_q(int sk_cli, srv_socket * srv, io_buf * buf, nope_list * nl)
 			printf("srv < failed with %d\n", errno);
 			break;
 		}
-next:
-		;
 	}
+
+	return 0;
 }
 
 int relay_r(srv_socket * srv, int sk_cli, io_buf * buf)
@@ -223,9 +226,9 @@ int relay_r(srv_socket * srv, int sk_cli, io_buf * buf)
 			for (i=0; i<buf->hdr.acount; i++)
 			{
 				dns_rr a;
-				if (! dns_get_answer(&buf->hdr, r, i, &a) < 0)
+				if (dns_get_answer(&buf->hdr, r, i, &a) < 0)
 				{
-					printf("      ? %04hx -- malformed A.%u section\n", 
+					printf("      ? %04hx -- malformed A.%lu section\n", 
 						buf->hdr.id, i);
 					goto drop;
 				}
@@ -235,7 +238,7 @@ int relay_r(srv_socket * srv, int sk_cli, io_buf * buf)
 
 				if (a.len != 4)
 				{
-					printf("      ? %04hx -- malformed A.%u section\n", 
+					printf("      ? %04hx -- malformed A.%lu section\n", 
 						buf->hdr.id, i);
 					goto drop;
 				}
@@ -252,6 +255,8 @@ drop:
 		if (i < --srv->pending)
 			srv->requests[i] = srv->requests[srv->pending];
 	}
+
+	return 0;
 }
 
 /*
@@ -378,7 +383,7 @@ int main(int argc, char ** argv)
 	//
 	nl = load_nope_list(conf.blacklist, 16*1024*1024);
 	if (nl)
-		printf("Loaded %u patterns from %s\n", nl->size, conf.blacklist);
+		printf("Loaded %lu patterns from %s\n", nl->size, conf.blacklist);
 
 	//
 	sk_cli = socket(AF_INET, SOCK_DGRAM, 0);
