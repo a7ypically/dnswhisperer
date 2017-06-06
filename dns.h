@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+#include <arpa/inet.h>
 
 /*
  *	Raw DNS packet header
@@ -62,6 +63,7 @@ int dns_get_question(const dns_header * hdr, size_t len, size_t q_index, dns_que
 int dns_get_answer(const dns_header * hdr, size_t len, size_t a_index, dns_rr * a);
 
 void dump_dns_response(const dns_header * hdr, size_t len);
+void get_dns_req_reply(const dns_header * hdr, size_t len, char *str, size_t str_size, struct in_addr *client);
 
 #endif
 

@@ -188,7 +188,6 @@ int dns_get_answer(const dns_header * hdr, size_t len, size_t a_index, dns_rr * 
 	return 0;
 }
 
-#if 0
 void dump_dns_response(const dns_header * hdr, size_t len)
 {
 	size_t i, q_count, a_count;
@@ -208,8 +207,8 @@ void dump_dns_response(const dns_header * hdr, size_t len)
 
 	printf("ID        0x%04hx\n", htons(hdr->id));
 	printf("flags     0x%04hx\n", htons(hdr->flags));
-	printf("q_count   %u\n", q_count);
-	printf("a_count   %u\n", a_count);
+	printf("q_count   %lu\n", q_count);
+	printf("a_count   %lu\n", a_count);
 	printf("ns_count  %hu\n", htons(hdr->nscount));
 	printf("ar_count  %hu\n", htons(hdr->arcount));
 
@@ -218,11 +217,11 @@ void dump_dns_response(const dns_header * hdr, size_t len)
 		dns_question q;
 		if (dns_get_question(hdr, len, i, &q) < 0)
 		{
-			printf("Failed to parse Q[%u]\n", i);
+			printf("Failed to parse Q[%lu]\n", i);
 			return;
 		}
 
-		printf("\n   Q%u\n", i+1);
+		printf("\n   Q%lu\n", i+1);
 		printf("   Name   [%s]\n", q.name);
 		printf("   Type   0x%04x\n", q.type);
 		printf("   Class  0x%04x\n", q.class_);
@@ -233,17 +232,102 @@ void dump_dns_response(const dns_header * hdr, size_t len)
 		dns_rr a;
 		if (dns_get_answer(hdr, len, i, &a) < 0)
 		{
-			printf("Failed to parse A[%u]\n", i);
+			printf("Failed to parse A[%lu]\n", i);
 			return;
 		}
 
-		printf("\n   A%u\n", i+1);
+		printf("\n   A%lu\n", i+1);
 		printf("   Name   [%s]\n", a.name);
 		printf("   Type   0x%04x\n", a.type);
 		printf("   Class  0x%04x\n", a.class_);
-		printf("   TTL    %lu\n", a.ttl);
+		printf("   TTL    %u\n", a.ttl);
 		printf("   Bytes  %hu\n", a.len);
+        if (a.type == 1) {
+            printf("   %s\n", inet_ntoa(*(struct in_addr *)a.data));
+        } else if (a.type == 5) {
+            int len;
+            char *itr = a.data;
+            printf("   ");
+            while (len = *itr) {
+                printf("%.*s.", len, itr+1);
+                itr += len + 1;
+            }
+            printf("\n");
+        }
 	}
 }
-#endif
+
+void get_dns_req_reply(const dns_header * hdr, size_t len, char *str, size_t str_size, struct in_addr *client)
+{
+	size_t i, q_count, a_count;
+    int res;
+
+	q_count = htons(hdr->qcount);
+	a_count = htons(hdr->acount);
+
+	res = snprintf(str, str_size, "%s - ", inet_ntoa(*(struct in_addr *)client));
+    str += res;
+    str_size -= res;
+    if (str_size < 0) return;
+
+	res = snprintf(str, str_size, "(0x%04hx, 0x%04hx, %lu, %lu, %hu, %hu) ", 
+                    htons(hdr->id), htons(hdr->flags), q_count, a_count, htons(hdr->nscount), htons(hdr->arcount));
+
+    str += res;
+    str_size -= res;
+    if (str_size < 0) return;
+
+	for (i=0; i < q_count; i++)
+	{
+		dns_question q;
+		if (dns_get_question(hdr, len, i, &q) < 0)
+		{
+			printf("Failed to parse Q[%lu]\n", i);
+			return;
+		}
+
+	    res = snprintf(str, str_size, "Q%lu:%s,0x%04x,0x%04x ", i+1, q.name, q.type, q.class_);
+        str += res;
+        str_size -= res;
+        if (str_size < 0) return;
+	}
+
+	for (i=0; i < a_count; i++)
+	{
+		dns_rr a;
+		if (dns_get_answer(hdr, len, i, &a) < 0)
+		{
+			printf("Failed to parse A[%lu]\n", i);
+			return;
+		}
+
+	    res = snprintf(str, str_size, "A%lu:[%s],0x%04x,0x%04x ", i+1, a.name, a.type, a.class_);
+        str += res;
+        str_size -= res;
+        if (str_size < 0) return;
+
+        if (a.type == 1) {
+	        res = snprintf(str, str_size, "%s ", inet_ntoa(*(struct in_addr *)a.data));
+            str += res;
+            str_size -= res;
+            if (str_size < 0) return;
+        } else if (a.type == 5) {
+            int len;
+            char *itr = a.data;
+            while (len = *itr) {
+	            res = snprintf(str, str_size, "%.*s.", len, itr+1);
+                str += res;
+                str_size -= res;
+                if (str_size < 0) return;
+
+                itr += len + 1;
+            }
+            if (str_size >= 2) {
+                strcpy(str, " ");
+                str += 1;
+                str_size -= 1;
+            }
+        }
+	}
+}
 

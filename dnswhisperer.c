@@ -21,6 +21,7 @@
 
 #include <unistd.h>
 
+#include "log.h"
 #include "dns.h"
 #include "nope_list.h"
 
@@ -32,14 +33,20 @@
 typedef struct sockaddr_in sockaddr_in;
 typedef struct timeval timeval;
 
+#define LOG_FILE   0x1
+#define LOG_SERVER 0x2
+static int do_log = 0;
+
 /*
  *
  */
 typedef struct app_config
 {
+	int          listen_port;
 	const char * dns_server;
 	const char * log_file;
 	const char * blacklist;
+	int          log_server_port;
 	int          daemonize;
 	int          filter_ipv6;
 
@@ -138,7 +145,7 @@ int relay_q(int sk_cli, srv_socket * srv, io_buf * buf, nope_list * nl, int filt
 		nope_it = 0;
 
 		if (DNS_GET_OPCODE(&buf->hdr) == 0 && /* Query, RFC 1035 */
-		    buf->hdr.qcount != 0)
+                   buf->hdr.qcount != 0)
 		{
 			size_t i, n = htons(buf->hdr.qcount);
 
@@ -163,9 +170,7 @@ int relay_q(int sk_cli, srv_socket * srv, io_buf * buf, nope_list * nl, int filt
 					continue;
 				}
 
-				printf("%s %04lx -- %s\n", 
-					nope_it ? "nope --" : "       ",
-					0xffff & srv->next_id_ext, q.name);
+				//printf("%s %04lx -- %s\n", nope_it ? "nope --" : "	   ", 0xffff & srv->next_id_ext, q.name);
 			}
 
 			if (nope_it) continue;
@@ -189,6 +194,8 @@ int relay_q(int sk_cli, srv_socket * srv, io_buf * buf, nope_list * nl, int filt
 			printf("srv < failed with %d\n", errno);
 			break;
 		}
+
+		//printf("%s - %s (%lu)\n", inet_ntoa(sa_cli.sin_addr), q.name, req->id_ext);
 	}
 
 	return 0;
@@ -220,7 +227,7 @@ int relay_r(srv_socket * srv, int sk_cli, io_buf * buf)
 			continue;
 		}
 
-	//	dump_dns_response(&buf->hdr, r);
+		//dump_dns_response(&buf->hdr, r);
 
 		for (i=0, req=srv->requests; i<srv->pending; i++, req++)
 			if ( (req->id_ext & 0xffff) == buf->hdr.id )
@@ -230,6 +237,13 @@ int relay_r(srv_socket * srv, int sk_cli, io_buf * buf)
 		{
 			printf("      ? %04hx -- response for unknown query\n", buf->hdr.id);
 			continue;
+		}
+
+		if (do_log) {
+			char str[1024];
+			get_dns_req_reply(&buf->hdr, r, str, sizeof(str), &req->addr.sin_addr);
+			if (do_log & LOG_SERVER) log_str(str);
+			if (do_log & LOG_FILE) printf("%s\n", str);
 		}
 
 		buf->hdr.id = req->id_int;
@@ -261,6 +275,7 @@ int relay_r(srv_socket * srv, int sk_cli, io_buf * buf)
 		}
 
 		//
+
 		r = sendto(sk_cli, buf, r, 0, (void*)&req->addr, sizeof req->addr);
 		if (r < 0)
 			printf("cli < failed with %d\n", errno);
@@ -286,15 +301,17 @@ const char * get_param(int argc, char ** argv, int i, const char * what)
 void syntax()
 {
 	printf(
-	    "Syntax: dnswhisperer [-l <arg>] [-f <arg>] [-s <arg>] [-d]\n"
-	    "\n"
-	    "        -l <file>         -  log to <file>\n"
-	    "        -f <file>         -  read blacklist from <file>\n"
-	    "        -s <IP4_address>  -  DNS server to use\n"
-	    "        -d                -  daemonize\n"
-	    "        -6                -  filter ipv6 queries\n"
-	    "        -h, -?            -  show this message\n"
-	    "\n"
+           "Syntax: dnswhisperer [-l <arg>] [-f <arg>] [-s <arg>] [-d]\n"
+           "\n"
+           "		 -p port  		   -  listen port\n"
+           "		 -b port           -  log server port\n"
+           "		 -l <file>         -  log to <file>\n"
+           "		 -f <file>         -  read blacklist from <file>\n"
+           "		 -s <IP4_address>  -  DNS server to use\n"
+           "		 -d	               -  daemonize\n"
+           "		 -6	               -  filter ipv6 queries\n"
+           "		 -h, -?            -  show this message\n"
+           "\n"
 	);
 
 	exit(1);
@@ -309,6 +326,12 @@ void parse_args(int argc, char ** argv, app_config * conf)
 		char * arg = argv[i];
 		if (! strcmp(arg, "-s"))
 			conf->dns_server = get_param(argc, argv, ++i, "-s");
+		else
+		if (! strcmp(arg, "-p"))
+			conf->listen_port = atoi(get_param(argc, argv, ++i, "-p"));
+		else
+		if (! strcmp(arg, "-b"))
+			conf->log_server_port = atoi(get_param(argc, argv, ++i, "-b"));
 		else
 		if (! strcmp(arg, "-l"))
 			conf->log_file = get_param(argc, argv, ++i, "-l");
@@ -370,19 +393,23 @@ int main(int argc, char ** argv)
 {
 	app_config  conf =
 	{
-		"208.67.222.222",     /* dns_server         */
-		NULL,                 /* log_file -> stdout */
-		"dnswhisperer.txt",   /* blacklist          */
-		0,                    /* daemonize          */
-		0                     /* filter ipv6        */
+               5333,                 /* listen port        */
+               "208.67.222.222",     /* dns_server         */
+               NULL,                 /* log_file -> stdout */
+               "dnswhisperer.txt",   /* blacklist          */
+               0,                    /* log server port    */
+               0,                    /* daemonize          */
+               0                     /* filter ipv6        */
 	};
 
 	nope_list * nl;
 	io_buf      buf = { 0 };
 	srv_socket  srv = { 0 }; /* just for one for now */
+	int         sk_log = -1;
 	int         sk_cli;
 	int         sk_max;
 
+	sockaddr_in sa_log = { AF_INET };
 	sockaddr_in sa_cli = { AF_INET };
 	sockaddr_in sa_srv = { AF_INET };
 
@@ -396,6 +423,7 @@ int main(int argc, char ** argv)
 			die("Failed to open %s for writing, error %d\n", conf.log_file, errno);
 
 		setvbuf(stdout, NULL, _IONBF, 0);
+		do_log |= LOG_FILE;
 	}
 
 	//
@@ -411,7 +439,7 @@ int main(int argc, char ** argv)
 	if (unblock(sk_cli) < 0)
 		die("unblock() failed with %d\n", errno);
 
-	sa_init(&sa_cli, NULL, 5333);
+	sa_init(&sa_cli, NULL, conf.listen_port);
 	if (bind(sk_cli, (void*)&sa_cli, sizeof sa_cli) < 0)
 		die("bind() failed with %d\n", errno);
 
@@ -429,6 +457,32 @@ int main(int argc, char ** argv)
 
 	printf("Using %s as DNS server\n", conf.dns_server);
 
+	if (conf.log_server_port) {
+		int enable = 1;
+
+		log_init(1024*1024);
+
+		do_log |= LOG_SERVER;
+
+		sk_log	= socket(AF_INET, SOCK_STREAM, 0);
+		if (sk_log < 0)
+			die("socket() failed with %d\n", errno);
+
+		if (unblock(sk_log) < 0)
+			die("unblock() failed with %d\n", errno);
+
+		if (setsockopt(sk_log, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
+			die("setsockopt(SO_REUSEADDR) failed with %d", errno);
+
+		sa_init(&sa_log, NULL, conf.log_server_port);
+		if (bind(sk_log, (void*)&sa_log, sizeof sa_log) < 0)
+			die("bind() failed with %d\n", errno);
+
+		if (listen(sk_log, SOMAXCONN) < 0)
+			die("listen() failed with %d\n", errno);
+	}
+
+
 	//
 	if (conf.daemonize)
 	{
@@ -438,6 +492,7 @@ int main(int argc, char ** argv)
 
 	//
 	sk_max = (sk_cli < srv.sk) ? srv.sk : sk_cli;
+	if (conf.log_server_port) sk_max = (sk_max < sk_log) ? sk_log: sk_max;
 
 	for (;;)
 	{
@@ -448,6 +503,7 @@ int main(int argc, char ** argv)
 		FD_ZERO(&fdr);
 		FD_SET(sk_cli, &fdr);
 		FD_SET(srv.sk, &fdr);
+		if (conf.log_server_port) FD_SET(sk_log, &fdr);
 
 		r = select(sk_max+1, &fdr, NULL, NULL, &cycle);
 		if (r < 0 && errno != EINTR)
@@ -461,6 +517,14 @@ int main(int argc, char ** argv)
 
 		if (FD_ISSET(srv.sk, &fdr))
 			relay_r(&srv, sk_cli, &buf);
+
+		if (conf.log_server_port && FD_ISSET(sk_log, &fdr)) {
+			int log_fd = accept(sk_log, NULL, NULL);
+			if (log_fd != -1) {
+				log_print(log_fd);
+				close(log_fd);
+			}
+		}
 	}
 
 	return 0;
