@@ -240,10 +240,12 @@ int relay_r(srv_socket * srv, int sk_cli, io_buf * buf)
 		}
 
 		if (do_log) {
-			char str[1024];
-			get_dns_req_reply(&buf->hdr, r, str, sizeof(str), &req->addr.sin_addr);
-			if (do_log & LOG_SERVER) log_str(str);
-			if (do_log & LOG_FILE) printf("%s\n", str);
+			if (do_log & LOG_SERVER) {
+				char str[1024];
+				get_dns_req_reply(&buf->hdr, r, str, sizeof(str), &req->addr.sin_addr);
+				log_str(str);
+			}
+			if (do_log & LOG_FILE) dump_dns_response(&buf->hdr, r);
 		}
 
 		buf->hdr.id = req->id_int;

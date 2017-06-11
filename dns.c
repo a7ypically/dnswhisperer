@@ -188,6 +188,31 @@ int dns_get_answer(const dns_header * hdr, size_t len, size_t a_index, dns_rr * 
 	return 0;
 }
 
+static size_t dns_get_label(const dns_header *hdr, size_t hdr_len, char *ptr, char *str, size_t str_size)
+{
+    int len;
+    int res;
+    int count = 0;
+    char *itr = ptr;
+    while (len = *itr) {
+        if (*itr & 0xc0) {
+            int p = htons(*(uint16_t *)itr) & 0x3fff;
+            res = dns_get_label(hdr, hdr_len, ((char *)hdr)+p, str, str_size);
+            len = 2;
+        } else {
+            res = snprintf(str, str_size, "%.*s.", len, itr+1);
+        }
+        str += res;
+        count += res;
+        str_size -= res;
+        if (str_size < 0) break;
+
+        itr += len + 1;
+    }
+
+    return count;
+}
+
 void dump_dns_response(const dns_header * hdr, size_t len)
 {
 	size_t i, q_count, a_count;
@@ -245,14 +270,9 @@ void dump_dns_response(const dns_header * hdr, size_t len)
         if (a.type == 1) {
             printf("   %s\n", inet_ntoa(*(struct in_addr *)a.data));
         } else if (a.type == 5) {
-            int len;
-            char *itr = a.data;
-            printf("   ");
-            while (len = *itr) {
-                printf("%.*s.", len, itr+1);
-                itr += len + 1;
-            }
-            printf("\n");
+            char str[512];
+            dns_get_label(hdr, len, a.data, str, sizeof(str));
+            printf("%s\n", str);
         }
 	}
 }
@@ -312,16 +332,11 @@ void get_dns_req_reply(const dns_header * hdr, size_t len, char *str, size_t str
             str_size -= res;
             if (str_size < 0) return;
         } else if (a.type == 5) {
-            int len;
-            char *itr = a.data;
-            while (len = *itr) {
-	            res = snprintf(str, str_size, "%.*s.", len, itr+1);
-                str += res;
-                str_size -= res;
-                if (str_size < 0) return;
+            res = dns_get_label(hdr, len, a.data, str, str_size);
+            str += res;
+            str_size -= res;
+            if (str_size < 0) return;
 
-                itr += len + 1;
-            }
             if (str_size >= 2) {
                 strcpy(str, " ");
                 str += 1;
